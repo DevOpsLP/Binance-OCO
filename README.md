@@ -102,3 +102,7 @@ async def maintain_listen_key(listen_key):
         await asyncio.sleep(1800)  # 30 minutes
         await keepalive_listen_key(listen_key)
 ```
+
+# License
+
+This project is open-source and available under the MIT License.
