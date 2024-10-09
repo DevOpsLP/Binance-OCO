@@ -77,51 +77,58 @@ async def cancel_order(symbol, order_id):
                 logging.info(f"Failed to cancel order {order_id}: HTTP {response}")
 
 async def listen_to_binance():
-    listen_key = await get_listen_key()
-    if not listen_key:
-        return
-    
-    url = f"wss://fstream.binance.com/ws/{listen_key}"
+    while True:
+        listen_key = await get_listen_key()
+        if not listen_key:
+            await asyncio.sleep(60)
+            continue
+        
+        url = f"wss://fstream.binance.com/ws/{listen_key}"
 
-    async with websockets.connect(url) as ws:
-        logging.info("Connected to WebSocket. Listening for events...")
+        try:
+            async with websockets.connect(url) as ws:
+                logging.info("Connected to WebSocket. Listening for events...")
 
-        while True:
-            try:
-                response = await ws.recv()
-                event = json.loads(response)
-                
-                if event['e'] == 'ORDER_TRADE_UPDATE':
-                    order = event['o']
-                    symbol = order['s']
-                    order_type = order['o']
-                    order_status = order['X']
-                    client_order_id = order['c']
+                while True:
+                    try:
+                        response = await ws.recv()
+                        event = json.loads(response)
+                        
+                        if event['e'] == 'ORDER_TRADE_UPDATE':
+                            order = event['o']
+                            symbol = order['s']
+                            order_type = order['o']
+                            order_status = order['X']
+                            client_order_id = order['c']
 
-                    logging.info(f"Received event: {event}")
+                            logging.info(f"Received event: {event}")
 
-                    # Initialize symbol tracking if it doesn't exist
-                    if symbol not in symbol_orders:
-                        symbol_orders[symbol] = {'stop_order_id': None, 'tp_order_id': None}
+                            # Initialize symbol tracking if it doesn't exist
+                            if symbol not in symbol_orders:
+                                symbol_orders[symbol] = {'stop_order_id': None, 'tp_order_id': None}
 
-                    # Track STOP_MARKET and TAKE_PROFIT_MARKET orders
-                    if order_type == 'STOP_MARKET' and order_status == 'NEW':
-                        symbol_orders[symbol]['stop_order_id'] = client_order_id
-                    elif order_type == 'TAKE_PROFIT_MARKET' and order_status == 'NEW':
-                        symbol_orders[symbol]['tp_order_id'] = client_order_id
+                            # Track STOP_MARKET and TAKE_PROFIT_MARKET orders
+                            if order_type == 'STOP_MARKET' and order_status == 'NEW':
+                                symbol_orders[symbol]['stop_order_id'] = client_order_id
+                            elif order_type == 'TAKE_PROFIT_MARKET' and order_status == 'NEW':
+                                symbol_orders[symbol]['tp_order_id'] = client_order_id
 
-                    # Cancel the opposite order when one of them gets filled
-                    if order_status == 'FILLED':
-                        if client_order_id == symbol_orders[symbol]['stop_order_id'] and symbol_orders[symbol]['tp_order_id']:
-                            await cancel_order(symbol, symbol_orders[symbol]['tp_order_id'])
-                            symbol_orders[symbol]['tp_order_id'] = None
-                        elif client_order_id == symbol_orders[symbol]['tp_order_id'] and symbol_orders[symbol]['stop_order_id']:
-                            await cancel_order(symbol, symbol_orders[symbol]['stop_order_id'])
-                            symbol_orders[symbol]['stop_order_id'] = None
+                            # Cancel the opposite order when one of them gets filled
+                            if order_status == 'FILLED':
+                                if client_order_id == symbol_orders[symbol]['stop_order_id'] and symbol_orders[symbol]['tp_order_id']:
+                                    await cancel_order(symbol, symbol_orders[symbol]['tp_order_id'])
+                                    symbol_orders[symbol]['tp_order_id'] = None
+                                elif client_order_id == symbol_orders[symbol]['tp_order_id'] and symbol_orders[symbol]['stop_order_id']:
+                                    await cancel_order(symbol, symbol_orders[symbol]['stop_order_id'])
+                                    symbol_orders[symbol]['stop_order_id'] = None
+                    except websockets.ConnectionClosed as e:
+                        logging.info(f"Connection closed: {e}")
+                        break
+        except Exception as e:
+            logging.error(f"Failed to connect to WebSocket: {e}")
 
-            except websockets.ConnectionClosed as e:
-                logging.info(f"Connection closed: {e}")
-                break
+        logging.info("Reconnecting to Binance WebSocket...")
+        await asyncio.sleep(5)  # Wait before reconnecting
 
 async def get_listen_key():
     url = f"{BINANCE_API_BASE_URL}{LISTEN_KEY_ENDPOINT}"
@@ -145,6 +152,7 @@ async def maintain_listen_key(listen_key):
         await keepalive_listen_key(listen_key)
 
 async def main():
+    await cancel_order('LINKUSDT', 'bksGXLTsPBX7MCZeO8oyIq')
     listen_key = await get_listen_key()
     if listen_key:
         asyncio.create_task(maintain_listen_key(listen_key))
